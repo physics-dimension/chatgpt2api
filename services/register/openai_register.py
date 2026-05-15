@@ -37,11 +37,31 @@ config = {
     "threads": 3,
 }
 register_config_file = base_dir.parents[1] / "data" / "register.json"
+register_results_file = base_dir.parents[1] / "data" / "register_results.jsonl"
+register_results_lock = threading.Lock()
 try:
     saved_config = json.loads(register_config_file.read_text(encoding="utf-8"))
     config.update({key: saved_config[key] for key in ("mail", "proxy", "total", "threads") if key in saved_config})
 except Exception:
     pass
+
+
+def _append_register_result(result: dict) -> None:
+    try:
+        register_results_file.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps({
+            "email": str(result.get("email") or ""),
+            "password": str(result.get("password") or ""),
+            "access_token": str(result.get("access_token") or ""),
+            "refresh_token": str(result.get("refresh_token") or ""),
+            "id_token": str(result.get("id_token") or ""),
+            "created_at": str(result.get("created_at") or ""),
+        }, ensure_ascii=False)
+        with register_results_lock:
+            with open(register_results_file, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+    except Exception as error:
+        log(f"append register_results.jsonl 失败: {error}", "red")
 
 auth_base = "https://auth.openai.com"
 platform_base = "https://platform.openai.com"
@@ -611,7 +631,8 @@ def worker(index: int) -> dict:
         result = registrar.register(index)
         cost = time.time() - start
         access_token = str(result["access_token"])
-        account_service.add_accounts([access_token])
+        _append_register_result(result)
+        account_service.add_accounts_with_meta([result])
         account_service.refresh_accounts([access_token])
         with stats_lock:
             stats["done"] += 1

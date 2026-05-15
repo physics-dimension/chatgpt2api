@@ -4,10 +4,11 @@ import asyncio
 import json
 
 from fastapi import APIRouter, Header
-from fastapi.responses import StreamingResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
 from api.support import require_admin
+from services.register.openai_register import register_results_file
 from services.register_service import register_service
 
 
@@ -64,5 +65,34 @@ def create_router() -> APIRouter:
                 await asyncio.sleep(0.5)
 
         return StreamingResponse(stream(), media_type="text/event-stream")
+
+    @router.get("/api/register/export/rt")
+    async def export_refresh_tokens(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        if not register_results_file.exists():
+            return PlainTextResponse("", media_type="text/plain")
+        lines: list[str] = []
+        for raw in register_results_file.read_text(encoding="utf-8").splitlines():
+            try:
+                rt = str(json.loads(raw).get("refresh_token") or "").strip()
+            except Exception:
+                continue
+            if rt:
+                lines.append(rt)
+        return PlainTextResponse(
+            "\n".join(lines) + ("\n" if lines else ""),
+            media_type="text/plain",
+            headers={"Content-Disposition": 'attachment; filename="refresh_tokens.txt"'},
+        )
+
+    @router.get("/api/register/export/full")
+    async def export_full_results(authorization: str | None = Header(default=None)):
+        require_admin(authorization)
+        content = register_results_file.read_text(encoding="utf-8") if register_results_file.exists() else ""
+        return PlainTextResponse(
+            content,
+            media_type="application/x-ndjson",
+            headers={"Content-Disposition": 'attachment; filename="register_results.jsonl"'},
+        )
 
     return router

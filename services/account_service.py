@@ -60,6 +60,8 @@ class AccountService:
         normalized["image_quota_unknown"] = bool(normalized.get("image_quota_unknown"))
         normalized["email"] = normalized.get("email") or None
         normalized["user_id"] = normalized.get("user_id") or None
+        normalized["refresh_token"] = normalized.get("refresh_token") or None
+        normalized["id_token"] = normalized.get("id_token") or None
         limits_progress = normalized.get("limits_progress")
         normalized["limits_progress"] = limits_progress if isinstance(limits_progress, list) else []
         normalized["default_model_slug"] = normalized.get("default_model_slug") or None
@@ -219,6 +221,40 @@ class AccountService:
             self._save_accounts()
             items = [dict(item) for item in self._accounts.values()]
             log_service.add(LOG_TYPE_ACCOUNT, f"新增 {added} 个账号，跳过 {skipped} 个",
+                            {"added": added, "skipped": skipped})
+        return {"added": added, "skipped": skipped, "items": items}
+
+    def add_accounts_with_meta(self, results: list[dict]) -> dict:
+        """接受完整 register 结果（含 refresh_token / id_token / email），保存到账号池。"""
+        results = [item for item in results if isinstance(item, dict) and item.get("access_token")]
+        if not results:
+            return {"added": 0, "skipped": 0, "items": self.list_accounts()}
+
+        with self._lock:
+            added = 0
+            skipped = 0
+            for item in results:
+                access_token = str(item["access_token"])
+                current = self._accounts.get(access_token) or {}
+                if current:
+                    skipped += 1
+                else:
+                    added += 1
+                account = self._normalize_account(
+                    {
+                        **current,
+                        "access_token": access_token,
+                        "refresh_token": item.get("refresh_token") or current.get("refresh_token"),
+                        "id_token": item.get("id_token") or current.get("id_token"),
+                        "email": item.get("email") or current.get("email"),
+                        "type": str(current.get("type") or "free"),
+                    }
+                )
+                if account is not None:
+                    self._accounts[access_token] = account
+            self._save_accounts()
+            items = [dict(account) for account in self._accounts.values()]
+            log_service.add(LOG_TYPE_ACCOUNT, f"新增 {added} 个账号（含 RT），跳过 {skipped} 个",
                             {"added": added, "skipped": skipped})
         return {"added": added, "skipped": skipped, "items": items}
 
